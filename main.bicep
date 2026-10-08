@@ -150,7 +150,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-11-01' = {
     osProfile: {
       computerName: vmName
       adminUsername: adminUsername
-      customData: loadFileAsBase64('cloud-init.yaml')
+      // Injects the static public IP as the WireGuard endpoint; IMDS omits Standard SKU public IPs.
+      customData: base64(replace(loadTextContent('cloud-init.yaml'), '__WG_ENDPOINT__', publicIp.properties.ipAddress))
       linuxConfiguration: {
         disablePasswordAuthentication: true
         provisionVMAgent: true

@@ -8,6 +8,14 @@ packages:
   - curl
 
 write_files:
+  # The static public IP is injected by main.bicep at deployment time. Azure IMDS does not
+  # report Standard SKU public IPs in instance network metadata, so it cannot be queried here.
+  - path: /usr/local/etc/wg-endpoint
+    owner: root:root
+    permissions: '0644'
+    content: |
+      __WG_ENDPOINT__
+
   - path: /usr/local/sbin/configure-wireguard.sh
     owner: root:root
     permissions: '0700'
@@ -51,18 +59,9 @@ write_files:
       PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
       EOF
 
-      metadata_url='http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text'
-      public_ip=''
-      for attempt in $(seq 1 30); do
-        public_ip="$(curl --fail --silent --show-error --max-time 5 -H Metadata:true "${metadata_url}" || true)"
-        if [[ "${public_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-          break
-        fi
-        sleep 2
-      done
-
+      public_ip="$(tr -d '[:space:]' < /usr/local/etc/wg-endpoint)"
       if [[ ! "${public_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo 'Unable to obtain the VM public IP from Azure Instance Metadata Service.' >&2
+        echo 'Invalid or missing WireGuard endpoint in /usr/local/etc/wg-endpoint.' >&2
         exit 1
       fi
 
@@ -188,7 +187,11 @@ write_files:
       public_key="$(printf '%s' "${private_key}" | wg pubkey)"
       preshared_key="$(wg genpsk)"
       server_public_key="$(wg show wg0 public-key)"
-      public_ip="$(curl -fsS -H Metadata:true 'http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text')"
+      public_ip="$(tr -d '[:space:]' < /usr/local/etc/wg-endpoint)"
+      if [[ ! "${public_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo 'Invalid or missing WireGuard endpoint in /usr/local/etc/wg-endpoint.' >&2
+        exit 1
+      fi
 
       cat >> "${server_config}" <<EOF
 
